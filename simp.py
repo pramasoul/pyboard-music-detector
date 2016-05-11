@@ -12,112 +12,6 @@ def hv(signal, harmonic):
     return sum(signal[i]*signal[(harmonic*i)%length]
                for i in range(length)) / length
 
-
-class Thing:
-    pass
-        
-
-def timed_lase(freq):
-
-    class LS:
-        def __init__(self, codelen):
-            self.phase = 0
-            self.x = 1
-            self.code = array.array('B', (rng() & 1 for t in range(codelen)))
-            self.code_i = 0
-
-
-        def tick(self):
-            laser.value(self.x)
-            if self.code_i >= len(self.code):
-                self.x = 1
-            else:
-                if self.phase:
-                    self.x = not self.x
-                else:
-                    #self.x = rng() & 1
-                    self.x = self.code[self.code_i]
-                    self.code_i += 1
-            self.phase = not self.phase
-            self.signal()
-
-        def signal(self):
-            scope.value(self.phase)
-
-
-    def tick(t):
-        ls.tick()
-
-    print('timed lasing')
-    print(10)
-    xtim = Timer(7)
-    laser = Pin('Y3', Pin.OUT_OD)
-    photodiode = ADC('X11')
-    scope = Pin('Y12', Pin.OUT_PP)
-    pd_buf = array.array('h', range(16))
-    ls = LS(len(pd_buf)//2)
-    rtim = Timer(8)
-    print(ls.code)
-    xtim.init(freq=freq)
-    rtim.init(freq=freq)
-    xtim.callback(tick)
-
-    n = 0
-    while True:    
-        photodiode.read_timed(pd_buf, rtim)
-        #print(n, ls.code_i, sum(pd_buf)/len(pd_buf))
-        print(n, ls.code_i, pd_buf)
-        ls.code_i = 0
-        n += 1
-
-
-def simple_lase():
-    print('simple lasing')
-    laser = Pin('Y3', Pin.OUT_OD)
-    photodiode = ADC('X11')
-    phase = 0
-    v = 0
-    x = prev_x = 0
-    filtered = 0.0
-    peak_filtered = 0.0
-    baseline = 0.0
-    i = 0
-    mon = DAC('X5', bits=12)
-    mon2 = DAC('X6', bits=12)
-    scope = Pin('Y12', Pin.OUT_PP)
-    scope2 = Pin('Y10', Pin.OUT_PP)
-    while True:
-        scope.value(phase)
-        v = photodiode.read()
-        laser.value(x)
-        delta = 0.01 * v
-        if prev_x:
-            filtered -= delta
-        else:
-            filtered += delta
-        prev_x = x
-        if phase:
-            x = rng() & 1
-        else:
-            x = not x
-            if filtered > peak_filtered:
-                peak_filtered = filtered
-            else:
-                peak_filtered += (filtered - peak_filtered) * 0.001
-            
-            hammer = filtered < 0.4 * peak_filtered and peak_filtered > 10.0
-            scope2.value(hammer)
-
-            mon.write(min(4095, max(0, int(filtered + 127.5))))
-            mon2.write(min(4095, max(0, int(peak_filtered + 127.5))))
-
-            if i%500 == 0:
-                print(filtered, peak_filtered - filtered)
-            i += 1
-            filtered *= 0.99
-        phase = not phase
-
-
 class LaserBeam:
     def __init__(self, laser_pinname, photodiode_pinname):
         self.laser = Pin(laser_pinname, Pin.OUT_OD)
@@ -152,32 +46,75 @@ class Mic:
         return self.level() > 100000
 
 
+class Piano:
+    def __init__(self, mic, beam):
+        self.mic = mic
+        self.beam = beam
+
+    def playing(self):
+        #FIXME
+        return self.beam or self.mic
+
+
+class CL1:
+    def __init__(self, stop_cmd, stop_status,
+                 rec_cmd, rec_status,
+                 play_cmd, play_status):
+        self.rec_cmd = Pin(rec_cmd, Pin.OUT_OD)
+        self.rec_cmd.value(1)
+        self.stop_cmd = Pin(stop_cmd, Pin.OUT_OD)
+        self.stop_cmd.value(1)
+        self.play_cmd = Pin(play_cmd, Pin.OUT_OD)
+        self.play_cmd.value(1)
+        self.rec_status = Pin(rec_status, Pin.IN, pull=Pin.PULL_UP)
+        self.stop_status = Pin(stop_status, Pin.IN, pull=Pin.PULL_UP)
+        self.play_status = Pin(play_status, Pin.IN, pull=Pin.PULL_UP)
+
+
+    def stopped(self):
+        return not self.stop_status.value()
+
+    def recording(self):
+        return not self.rec_status.value()
+
+    def playing(self):
+        return not self.play_status.value()
+
+    #FIXME: timeouts
+    def stop(self):
+        if not self.stopped():
+            self.stop_cmd.value(0)
+            sleep(0.1)
+        self.stop_cmd.value(1)
+
+    def record(self):
+        if not self.recording():
+            self.rec_cmd.value(0)
+            sleep(0.1)
+        self.rec_cmd.value(1)
+
+    def play(self):
+        if not self.playing():
+            self.play_cmd.value(0)
+            sleep(0.1)
+        self.play_cmd.value(1)
+
+
+
 def main():
     micropython.alloc_emergency_exception_buf(100)
     print('simp here')
     beam = LaserBeam('Y3', 'X11')
     mic = Mic('X12')
+    deck = CL1('X17', 'X18', 'X19', 'X20', 'X21', 'X22')
+    t = ((deck.stopped, 'stopped'),
+         (deck.recording, 'recording'),
+         (deck.playing, 'playing'))
     while True:
         print('laser {}, mic {}'.format(beam.interrupted(), mic.excited()))
-
-    tim = Timer(6)
-    tim.init(freq=96000)
-    buf = array.array('h', range(9600))
-    ac = array.array('f', range(9600))
-    mic = ADC('X12')
-    mon = DAC('X5', bits=12)
-    #mon.write_timed(buf, tim, mode=DAC.CIRCULAR)
-    while True:
-        mic.read_timed(buf, tim)
-        mon.write_timed(buf, tim, mode=DAC.NORMAL)
-        mean = sum(buf) / len(buf)
-        for i in range(len(buf)):
-            ac[i] = buf[i] - mean
-        print(sum(ac), ac[:10])
-        power = sum(v*v for v in ac) / len(ac)
-        hv2 = hv(ac, 2) / power
-        hv3 = hv(ac, 2) / power
-        print("mean {}, power {}, h2 {}, h3 {}".format(mean, power, hv2, hv3))
+        for test, label in t:
+            if test():
+                print(label)
 
 if __name__ == '__main__':
     main()
