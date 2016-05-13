@@ -2,8 +2,8 @@
 # simple
 
 import array
-from pyb import Pin, Timer, rng, ADC, DAC
-from time import sleep
+from pyb import Pin, Timer, rng, ADC, DAC, LED
+from time import sleep, ticks_ms, ticks_diff
 import micropython
 
 
@@ -35,25 +35,41 @@ class Mic:
         self.mic = ADC(mic_pinname)
         self.tim = Timer(timer_id, freq=48000)
         self.samples = array.array('h', range(4800))
+        self.normalized_spl = 0.0
 
     def level(self):
         samples = self.samples
         self.mic.read_timed(samples, self.tim)
         ave = sum(samples) / len(samples)
-        return sum((v-ave)**2 for v in samples) / len(samples)
+        self.normalized_spl = \
+            min(1.0, sum((v-ave)**2 for v in samples) / len(samples) / 2278619.0)
+        return self.normalized_spl
 
     def excited(self):
-        return self.level() > 100000
+        return self.level() > 0.01
 
 
 class Piano:
     def __init__(self, mic, beam):
         self.mic = mic
         self.beam = beam
+        self.beam_ever_interrupted = self.mic_ever_excited = False
+        self.ms_internote = 30 * 1000
+
+    def poll(self):
+        if self.beam.interrupted():
+            self.beam_interrupted_t = ticks_ms()
+            self.beam_ever_interrupted = True
+        if self.mic.excited():
+            self.mic_excited_t = ticks_ms()
+            self.mic_ever_excited = True
 
     def playing(self):
-        #FIXME
-        return self.beam or self.mic
+        self.poll()
+        # FIXME: smarter
+        return self.beam_ever_interrupted and self.mic_ever_excited \
+            and ticks_diff(self.beam_interrupted_t, ticks_ms()) < self.ms_internote \
+            and ticks_diff(self.mic_excited_t, ticks_ms()) < self.ms_internote
 
 
 class CL1:
@@ -69,7 +85,6 @@ class CL1:
         self.rec_status = Pin(rec_status, Pin.IN, pull=Pin.PULL_UP)
         self.stop_status = Pin(stop_status, Pin.IN, pull=Pin.PULL_UP)
         self.play_status = Pin(play_status, Pin.IN, pull=Pin.PULL_UP)
-
 
     def stopped(self):
         return not self.stop_status.value()
@@ -100,6 +115,27 @@ class CL1:
         self.play_cmd.value(1)
 
 
+class Lights:
+    def __init__(self, mic, beam, deck):
+        self.mic = mic
+        self.beam = beam
+        self.deck = deck
+        self.leds = [LED(1), LED(2), LED(3), LED(4)]
+
+    def update(self):
+        l = self.leds
+        if self.deck.recording():
+            l[0].on()
+        else:
+            l[0].off()
+        if self.deck.playing():
+            l[1].on()
+        else:
+            l[1].off()
+        l[2].intensity(self.beam.ping() >> 4)
+        l[3].intensity(int(256*self.mic.normalized_spl))
+        
+
 
 def main():
     micropython.alloc_emergency_exception_buf(100)
@@ -107,14 +143,33 @@ def main():
     beam = LaserBeam('Y3', 'X11')
     mic = Mic('X12')
     deck = CL1('X17', 'X18', 'X19', 'X20', 'X21', 'X22')
-    t = ((deck.stopped, 'stopped'),
-         (deck.recording, 'recording'),
-         (deck.playing, 'playing'))
-    while True:
-        print('laser {}, mic {}'.format(beam.interrupted(), mic.excited()))
+    piano = Piano(mic, beam)
+    lights = Lights(mic, beam, deck)
+
+    def show():
+        lights.update()
+        """
+        t = ((deck.stopped, 'stopped'),
+             (deck.recording, 'recording'),
+             (deck.playing, 'playing'))
+        print('laser {}, mic {}'.format(beam.interrupted(), mic.excited()), end=' ')
+        print('deck', end=' ')
         for test, label in t:
             if test():
-                print(label)
+                print(label, end= ' ')
+        if piano.playing():
+            print('Piano being played', end='')
+        print()
+        """
 
+    sleep(1)                    # stabilize
+    while True:
+        while not piano.playing():
+            show()
+        deck.record()
+        while piano.playing():
+            show()
+        deck.stop()
+        
 if __name__ == '__main__':
     main()
