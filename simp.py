@@ -54,22 +54,49 @@ class Piano:
         self.mic = mic
         self.beam = beam
         self.beam_ever_interrupted = self.mic_ever_excited = False
+        self.being_played = False
         self.ms_internote = 30 * 1000
 
-    def poll(self):
+    def poll_beam(self):
         if self.beam.interrupted():
             self.beam_interrupted_t = ticks_ms()
             self.beam_ever_interrupted = True
+            return True
+        else:
+            return False
+
+    def poll_mic(self):
         if self.mic.excited():
             self.mic_excited_t = ticks_ms()
             self.mic_ever_excited = True
+            return True
+        else:
+            return False
 
     def playing(self):
-        self.poll()
-        # FIXME: smarter
-        return self.beam_ever_interrupted and self.mic_ever_excited \
-            and ticks_diff(self.beam_interrupted_t, ticks_ms()) < self.ms_internote \
-            and ticks_diff(self.mic_excited_t, ticks_ms()) < self.ms_internote
+        """
+        Determine if the piano is being played:
+        1. A beam interruption (transition from unterrupted to interrupted)
+        indicates the start of playing.
+        2. It's no longer being played if the inter-note time has passed with
+        neither a beam interruption nor a mic excitation
+        """
+        if not self.being_played:
+            if self.poll_beam(): # Check the laser beam (this is fast)
+                self.being_played = True
+        else:
+            self.poll_beam()   # Check the laser beam (this is fast)
+            if ticks_diff(self.beam_interrupted_t, ticks_ms()) < self.ms_internote:
+                self.being_played = True
+            else:
+                # Could conceiveably be in an extended legato, so check the mic
+                self.poll_mic()         # This is slow
+                if self.mic_ever_excited \
+                   and ticks_diff(self.mic_excited_t, ticks_ms() < self.ms_internote):
+                    self.being_played = True
+                else:
+                    self.being_played = False
+        return self.being_played
 
 
 class CL1:
@@ -167,9 +194,11 @@ def main():
         while not piano.playing():
             show()
         deck.record()
+        print("record")
         while piano.playing():
             show()
         deck.stop()
+        print("stop")
         
 if __name__ == '__main__':
     main()
