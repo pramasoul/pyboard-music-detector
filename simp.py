@@ -79,7 +79,11 @@ class Piano:
         1. A beam interruption (transition from unterrupted to interrupted)
         indicates the start of playing.
         2. It's no longer being played if the inter-note time has passed with
-        neither a beam interruption nor a mic excitation
+        no subsequent beam interruption
+        """
+        return self.poll_beam() \
+            or self.beam_ever_interrupted \
+            and ticks_diff(self.beam_interrupted_t, ticks_ms()) < self.ms_internote 
         """
         if not self.being_played:
             if self.poll_beam(): # Check the laser beam (this is fast)
@@ -97,6 +101,7 @@ class Piano:
                 else:
                     self.being_played = False
         return self.being_played
+        """
 
 
 class CL1:
@@ -126,19 +131,22 @@ class CL1:
     def stop(self):
         if not self.stopped():
             self.stop_cmd.value(0)
-            sleep(0.1)
+            while not self.stopped():
+                sleep(0.1)
         self.stop_cmd.value(1)
 
     def record(self):
         if not self.recording():
             self.rec_cmd.value(0)
-            sleep(0.1)
+            while not self.recording():
+                sleep(0.1)
         self.rec_cmd.value(1)
 
     def play(self):
         if not self.playing():
             self.play_cmd.value(0)
-            sleep(0.1)
+            while not self.playing():
+                sleep(0.1)
         self.play_cmd.value(1)
 
 
@@ -191,14 +199,14 @@ def main():
 
     sleep(1)                    # stabilize
     while True:
-        while not piano.playing():
-            show()
-        deck.record()
-        print("record")
-        while piano.playing():
-            show()
-        deck.stop()
-        print("stop")
+        show()
+        if piano.playing() and not deck.recording():
+            deck.record()
+            print("record")
+            while piano.playing():
+                show()
+            deck.stop()
+            print("stop")
         
 if __name__ == '__main__':
     main()
