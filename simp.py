@@ -171,7 +171,6 @@ class Lights:
         l[3].intensity(int(256*self.mic.normalized_spl))
         
 
-
 def main():
     micropython.alloc_emergency_exception_buf(100)
     print('simp here')
@@ -180,22 +179,23 @@ def main():
     deck = CL1('X17', 'X18', 'X19', 'X20', 'X21', 'X22')
     piano = Piano(mic, beam)
     lights = Lights(mic, beam, deck)
+    pushbutton = pyb.Switch()
+    verbose = False
 
     def show():
         lights.update()
-        """
-        t = ((deck.stopped, 'stopped'),
-             (deck.recording, 'recording'),
-             (deck.playing, 'playing'))
-        print('laser {}, mic {}'.format(beam.interrupted(), mic.excited()), end=' ')
-        print('deck', end=' ')
-        for test, label in t:
-            if test():
-                print(label, end= ' ')
-        if piano.playing():
-            print('Piano being played', end='')
-        print()
-        """
+        if pushbutton():
+            t = ((deck.stopped, 'stopped'),
+                 (deck.recording, 'recording'),
+                 (deck.playing, 'playing'))
+            print('laser {}, mic {}'.format(beam.interrupted(), mic.excited()), end=' ')
+            print('deck', end=' ')
+            for test, label in t:
+                if test():
+                    print(label, end= ' ')
+            if piano.playing():
+                print('Piano being played', end='')
+            print()
 
     sleep(1)                    # stabilize
     while True:
