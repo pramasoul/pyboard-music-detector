@@ -1,10 +1,12 @@
-#
-# simple
+# Record piano playing
+# For a pyboard
+# Uses a laser beam, interruped by the hammers, to tell that piano is played
+# Controls a Sound Devices recorder (e.g. 702T) via a CL-1 interface box
 
 import array
 from machine import Pin
 from pyb import Timer, rng, ADC, DAC, LED, Switch
-from time import sleep, ticks_ms, ticks_diff
+from time import sleep, ticks_ms, ticks_diff, time
 import micropython
 
 
@@ -30,46 +32,18 @@ class LaserBeam:
         return self.ping() < self.threshold \
             and sum(self.ping() for i in range(10)) < 10 * self.threshold
 
-
-class Mic:
-    def __init__(self, mic_pinname, timer_id=6):
-        self.mic = ADC(mic_pinname)
-        self.tim = Timer(timer_id, freq=48000)
-        self.samples = array.array('h', range(4800))
-        self.normalized_spl = 0.0
-
-    def level(self):
-        samples = self.samples
-        self.mic.read_timed(samples, self.tim)
-        ave = sum(samples) / len(samples)
-        self.normalized_spl = \
-            min(1.0, sum((v-ave)**2 for v in samples) / len(samples) / 2278619.0)
-        return self.normalized_spl
-
-    def excited(self):
-        return self.level() > 0.01
-
-
 class Piano:
-    def __init__(self, mic, beam):
-        self.mic = mic
+    def __init__(self, beam):
         self.beam = beam
-        self.beam_ever_interrupted = self.mic_ever_excited = False
+        self.beam_ever_interrupted = False
         self.being_played = False
-        self.ms_internote = 30 * 1000
+        self.internote = 30
+        self.verbose = False
 
     def poll_beam(self):
         if self.beam.interrupted():
-            self.beam_interrupted_t = ticks_ms()
+            self.beam_interrupted_t = time()
             self.beam_ever_interrupted = True
-            return True
-        else:
-            return False
-
-    def poll_mic(self):
-        if self.mic.excited():
-            self.mic_excited_t = ticks_ms()
-            self.mic_ever_excited = True
             return True
         else:
             return False
@@ -82,27 +56,13 @@ class Piano:
         2. It's no longer being played if the inter-note time has passed with
         no subsequent beam interruption
         """
-        return self.poll_beam() \
-            or self.beam_ever_interrupted \
-            and ticks_diff(self.beam_interrupted_t, ticks_ms()) < self.ms_internote 
-        """
-        if not self.being_played:
-            if self.poll_beam(): # Check the laser beam (this is fast)
-                self.being_played = True
-        else:
-            self.poll_beam()   # Check the laser beam (this is fast)
-            if ticks_diff(self.beam_interrupted_t, ticks_ms()) < self.ms_internote:
-                self.being_played = True
-            else:
-                # Could conceiveably be in an extended legato, so check the mic
-                self.poll_mic()         # This is slow
-                if self.mic_ever_excited \
-                   and ticks_diff(self.mic_excited_t, ticks_ms() < self.ms_internote):
-                    self.being_played = True
-                else:
-                    self.being_played = False
-        return self.being_played
-        """
+        rv = self.poll_beam() \
+             or self.beam_ever_interrupted \
+             and (time() - self.beam_interrupted_t) < self.internote
+        if self.verbose:
+            print('piano playing: %s' % rv)
+        return rv
+
 
 
 class CL1:
@@ -115,7 +75,7 @@ class CL1:
         self.rec_status = Pin(rec_status)
         self.stop_status = Pin(stop_status)
         self.play_status = Pin(play_status)
-        self.pulse_duration = 0.2
+        self.pulse_duration = 0.4
 
     def stopped(self):
         return not self.stop_status()
@@ -157,8 +117,7 @@ class CL1:
         return ' '.join(v[1] for v in zip(s, names) if v[0])
 
 class Lights:
-    def __init__(self, mic, beam, deck):
-        self.mic = mic
+    def __init__(self, beam, deck):
         self.beam = beam
         self.deck = deck
         self.leds = [LED(1), LED(2), LED(3), LED(4)]
@@ -173,8 +132,11 @@ class Lights:
             l[1].on()
         else:
             l[1].off()
-        l[2].intensity(self.beam.ping() >> 4)
-        l[3].intensity(int(256*self.mic.normalized_spl))
+        if self.deck.stopped():
+            l[2].on()
+        else:
+            l[2].off()
+        l[3].intensity(self.beam.ping() >> 4)
         
 
 
@@ -182,22 +144,22 @@ def main():
     micropython.alloc_emergency_exception_buf(100)
     print('simp here')
     beam = LaserBeam('X1', 'X11')
-    mic = Mic('X12')
     deck = CL1('X17', 'X18', 'X19', 'X20', 'X21', 'X22')
-    piano = Piano(mic, beam)
-    lights = Lights(mic, beam, deck)
+    piano = Piano(beam)
+    lights = Lights(beam, deck)
     pushbutton = Switch()
     verbose = False
 
     def show():
         lights.update()
-        #if pushbutton():
-        if True:
-            print('laser {}, mic {}'.format(beam.interrupted(), mic.excited()), end=' ')
-            print('deck %s' % deck.status(), end=' ')
-            if piano.playing():
-                print('Piano being played', end='')
-            print()
+        if not verbose:
+            return
+        print('{}: laser {}'.format(ticks_ms(), beam.interrupted()), end=' ')
+        sleep(0.1)
+        print('deck %s' % deck.status(), end=' ')
+        if piano.playing():
+            print('Piano being played', end='')
+        print()
 
     sleep(1)                    # stabilize
     while True:
