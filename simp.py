@@ -107,14 +107,15 @@ class Piano:
 
 class CL1:
     def __init__(self, stop_cmd, stop_status,
-                 rec_cmd, rec_status,
+                 record_cmd, rec_status,
                  play_cmd, play_status):
-        self.rec_cmd = Pin(rec_cmd, Pin.OUT, value=1)
+        self.record_cmd = Pin(record_cmd, Pin.OUT, value=1)
         self.stop_cmd = Pin(stop_cmd, Pin.OUT, value=1)
         self.play_cmd = Pin(play_cmd, Pin.OUT, value=1)
         self.rec_status = Pin(rec_status)
         self.stop_status = Pin(stop_status)
         self.play_status = Pin(play_status)
+        self.pulse_duration = 0.2
 
     def stopped(self):
         return not self.stop_status()
@@ -127,26 +128,33 @@ class CL1:
 
     #FIXME: timeouts
     def stop(self):
-        if not self.stopped():
-            self.stop_cmd(0)
-            while not self.stopped():
-                sleep(0.1)
-        self.stop_cmd(1)
+        while not self.stopped():
+            self._pulse_low(self.stop_cmd)
+            if not self.stopped():
+                print('Hey, stop!')
 
     def record(self):
-        if not self.recording():
-            self.rec_cmd(0)
-            while not self.recording():
-                sleep(0.1)
-        self.rec_cmd(1)
+        while not self.recording():
+            self._pulse_low(self.record_cmd)
+            if not self.recording():
+                print('Hey, record!')
 
     def play(self):
-        if not self.playing():
-            self.play_cmd(0)
-            while not self.playing():
-                sleep(0.1)
-        self.play_cmd(1)
+        while not self.playing():
+            self._pulse_low(self.play_cmd)
+            if not self.playing():
+                print('Hey, play!')
 
+    def _pulse_low(self, what):
+        what(0)
+        sleep(self.pulse_duration)
+        what(1)
+        sleep(self.pulse_duration)
+
+    def status(self):
+        s = (self.stopped(), self.recording(), self.playing())
+        names = ('stopped', 'recording', 'playing')
+        return ' '.join(v[1] for v in zip(s, names) if v[0])
 
 class Lights:
     def __init__(self, mic, beam, deck):
@@ -169,6 +177,7 @@ class Lights:
         l[3].intensity(int(256*self.mic.normalized_spl))
         
 
+
 def main():
     micropython.alloc_emergency_exception_buf(100)
     print('simp here')
@@ -182,15 +191,10 @@ def main():
 
     def show():
         lights.update()
-        if pushbutton():
-            t = ((deck.stopped, 'stopped'),
-                 (deck.recording, 'recording'),
-                 (deck.playing, 'playing'))
+        #if pushbutton():
+        if True:
             print('laser {}, mic {}'.format(beam.interrupted(), mic.excited()), end=' ')
-            print('deck', end=' ')
-            for test, label in t:
-                if test():
-                    print(label, end= ' ')
+            print('deck %s' % deck.status(), end=' ')
             if piano.playing():
                 print('Piano being played', end='')
             print()
