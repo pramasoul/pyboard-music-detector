@@ -2,7 +2,8 @@
 # simple
 
 import array
-from pyb import Pin, Timer, rng, ADC, DAC, LED
+from machine import Pin
+from pyb import Timer, rng, ADC, DAC, LED, Switch
 from time import sleep, ticks_ms, ticks_diff
 import micropython
 
@@ -108,46 +109,43 @@ class CL1:
     def __init__(self, stop_cmd, stop_status,
                  rec_cmd, rec_status,
                  play_cmd, play_status):
-        self.rec_cmd = Pin(rec_cmd, Pin.OUT_OD)
-        self.rec_cmd.value(1)
-        self.stop_cmd = Pin(stop_cmd, Pin.OUT_OD)
-        self.stop_cmd.value(1)
-        self.play_cmd = Pin(play_cmd, Pin.OUT_OD)
-        self.play_cmd.value(1)
-        self.rec_status = Pin(rec_status, Pin.IN, pull=Pin.PULL_UP)
-        self.stop_status = Pin(stop_status, Pin.IN, pull=Pin.PULL_UP)
-        self.play_status = Pin(play_status, Pin.IN, pull=Pin.PULL_UP)
+        self.rec_cmd = Pin(rec_cmd, Pin.OUT, value=1)
+        self.stop_cmd = Pin(stop_cmd, Pin.OUT, value=1)
+        self.play_cmd = Pin(play_cmd, Pin.OUT, value=1)
+        self.rec_status = Pin(rec_status)
+        self.stop_status = Pin(stop_status)
+        self.play_status = Pin(play_status)
 
     def stopped(self):
-        return not self.stop_status.value()
+        return not self.stop_status()
 
     def recording(self):
-        return not self.rec_status.value()
+        return not self.rec_status()
 
     def playing(self):
-        return not self.play_status.value()
+        return not self.play_status()
 
     #FIXME: timeouts
     def stop(self):
         if not self.stopped():
-            self.stop_cmd.value(0)
+            self.stop_cmd(0)
             while not self.stopped():
                 sleep(0.1)
-        self.stop_cmd.value(1)
+        self.stop_cmd(1)
 
     def record(self):
         if not self.recording():
-            self.rec_cmd.value(0)
+            self.rec_cmd(0)
             while not self.recording():
                 sleep(0.1)
-        self.rec_cmd.value(1)
+        self.rec_cmd(1)
 
     def play(self):
         if not self.playing():
-            self.play_cmd.value(0)
+            self.play_cmd(0)
             while not self.playing():
                 sleep(0.1)
-        self.play_cmd.value(1)
+        self.play_cmd(1)
 
 
 class Lights:
@@ -174,12 +172,12 @@ class Lights:
 def main():
     micropython.alloc_emergency_exception_buf(100)
     print('simp here')
-    beam = LaserBeam('Y3', 'X11')
+    beam = LaserBeam('X1', 'X11')
     mic = Mic('X12')
     deck = CL1('X17', 'X18', 'X19', 'X20', 'X21', 'X22')
     piano = Piano(mic, beam)
     lights = Lights(mic, beam, deck)
-    pushbutton = pyb.Switch()
+    pushbutton = Switch()
     verbose = False
 
     def show():
